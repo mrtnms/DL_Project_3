@@ -1,0 +1,263 @@
+:root {
+  color-scheme: light;
+  --bg: #f4efe8;
+  --panel: rgba(255, 252, 247, 0.88);
+  --panel-strong: #fffaf2;
+  --text: #1a1714;
+  --muted: #655d54;
+  --line: rgba(73, 57, 40, 0.12);
+  --accent: #b45309;
+  --accent-dark: #7c2d12;
+  --shadow: 0 24px 80px rgba(61, 39, 14, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+  color: var(--text);
+  background:
+    radial-gradient(circle at top, rgba(251, 191, 36, 0.22), transparent 30%),
+    linear-gradient(180deg, #fcf7f0 0%, #f3ebe1 100%);
+  min-height: 100vh;
+}
+
+code {
+  font-family: "SFMono-Regular", Consolas, monospace;
+}
+
+.shell {
+  width: min(1100px, calc(100% - 2rem));
+  margin: 0 auto;
+  padding: 3rem 0 4rem;
+}
+
+.hero,
+.panel {
+  backdrop-filter: blur(10px);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  box-shadow: var(--shadow);
+}
+
+.hero {
+  padding: 2rem;
+}
+
+.eyebrow {
+  margin: 0 0 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--accent-dark);
+  font-size: 0.8rem;
+}
+
+h1,
+h2,
+h3,
+.label,
+button {
+  font-family: "Trebuchet MS", "Gill Sans", sans-serif;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(2.4rem, 6vw, 4.6rem);
+  line-height: 0.95;
+  max-width: 12ch;
+}
+
+.intro {
+  max-width: 60ch;
+  color: var(--muted);
+  font-size: 1.05rem;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.panel {
+  padding: 1.25rem;
+}
+
+.panel + .panel,
+.hero + .panel,
+.panel + .results-grid,
+.hero + .results-grid {
+  margin-top: 1rem;
+}
+
+.label {
+  display: inline-block;
+  margin-bottom: 0.6rem;
+  font-weight: 700;
+}
+
+textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 140px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: var(--panel-strong);
+  padding: 1rem;
+  font: inherit;
+  color: var(--text);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  margin-top: 1rem;
+}
+
+button {
+  border: 0;
+  border-radius: 999px;
+  padding: 0.9rem 1.35rem;
+  background: linear-gradient(135deg, var(--accent), #ea580c);
+  color: white;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+.status,
+.answer-copy,
+.match-description,
+.match-meta,
+.empty {
+  color: var(--muted);
+}
+
+.results-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: 1.05fr 1fr;
+  align-items: start;
+}
+
+.answer-copy {
+  white-space: pre-wrap;
+  line-height: 1.6;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.badge,
+.tag,
+.match-score {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  font-size: 0.84rem;
+}
+
+.badge {
+  padding: 0.3rem 0.7rem;
+  background: rgba(180, 83, 9, 0.12);
+  color: var(--accent-dark);
+}
+
+.matches {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.match-card {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 0.8rem;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.match-image {
+  width: 100%;
+  height: 100%;
+  max-height: 90px;
+  object-fit: cover;
+  border-radius: 12px;
+  background: #efe4d5;
+}
+
+.match-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: start;
+}
+
+.match-title,
+.match-description,
+.match-meta {
+  margin: 0;
+}
+
+.match-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin: 0.7rem 0;
+}
+
+.tag,
+.match-score {
+  padding: 0.25rem 0.6rem;
+  background: rgba(124, 45, 18, 0.08);
+  color: var(--accent-dark);
+}
+
+.match-link {
+  color: var(--accent-dark);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+@media (max-width: 860px) {
+  .results-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .shell {
+    width: min(100% - 1rem, 1100px);
+    padding-top: 1rem;
+  }
+
+  .hero,
+  .panel {
+    border-radius: 20px;
+  }
+
+  .match-card {
+    grid-template-columns: 1fr;
+  }
+
+  .match-image {
+    max-height: 180px;
+  }
+}
