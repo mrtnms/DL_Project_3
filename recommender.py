@@ -6,10 +6,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import ollama
+from rank_bm25 import BM25Okapi
+
 BASE_DIR = Path(__file__).resolve().parent
 GAMES_PATH = BASE_DIR / "games.json"
 MAX_GAMES = 5000
 DEFAULT_MATCH_COUNT = 5
+
+# Ollama model to use — swap for any model you have pulled locally
+OLLAMA_MODEL = "phi3.5"
 
 
 def create_search_engine() -> "GameSearchEngine":
@@ -58,27 +64,21 @@ class GameRecord:
 
 
 class GameSearchEngine:
-    """
-    This implementation is intentionally crude:
-    - it loads a subset of games
-    - it ignores the query for ranking
-    - it returns random games as "matches"
-    - it writes a simple canned answer instead of calling an LLM
-
-    Suggested improvements:
-    1. Replace `retrieve_candidates()` with keyword search, BM25, embeddings, or vector search.
-    2. Replace `rank_candidates()` with a real ranking function.
-    3. Replace `generate_answer()` with an LLM prompt over retrieved context.
-
-    Keep the public `search()` return shape stable so the Flask app and frontend keep working.
-    """
-
     def __init__(self, games_path: Path) -> None:
         self.games_path = games_path
         self.records = self.load_records()
 
+        # Build BM25 index once at startup over name + description + tags
+        corpus = []
+        for r in self.records:
+            tags = r._normalize_tags(r.raw.get("tags"))
+            genres = r.raw.get("genres", [])
+            text = f"{r.name} {r.short_description} {' '.join(tags)} {' '.join(genres)}"
+            corpus.append(text.lower().split())
+        self.bm25 = BM25Okapi(corpus)
+
     def load_records(self) -> list[GameRecord]:
-        payload = json.loads(self.games_path.read_text())
+        payload = json.loads(self.games_path.read_text(encoding="utf-8"))
         records: list[GameRecord] = []
 
         for app_id, raw in payload.items():
@@ -100,43 +100,89 @@ class GameSearchEngine:
             "answer": self.generate_answer(query, ranked_matches),
             "meta": {
                 "indexed_games": len(self.records),
-                "retrieval_mode": "random-demo",
-                "note": "Replace the scaffold in recommender.py with your own retrieval, ranking, and LLM logic.",
+                "retrieval_mode": "bm25+ollama",
+                "note": f"BM25 retrieval over {len(self.records)} games, ranked and answered via {OLLAMA_MODEL}.",
             },
         }
 
     def retrieve_candidates(self, query: str) -> list[GameRecord]:
         """
-        Very weak baseline retrieval.
-
-        Right now this ignores `query` and returns a random sample.
+        BM25 retrieval over the full game corpus.
+        Returns the top-20 candidates by BM25 score for the given query.
         """
-        if not self.records:
-            return []
-        sample_size = min(DEFAULT_MATCH_COUNT, len(self.records))
-        return random.sample(self.records, sample_size)
+        tokenized_query = query.lower().split()
+        scores = self.bm25.get_scores(tokenized_query)
+
+        # Pair each record with its BM25 score and take the top 20
+        scored = sorted(
+            zip(self.records, scores),
+            key=lambda x: x[1],
+            reverse=True,
+        )
+        top_candidates = [record for record, score in scored[:20] if score > 0]
+
+        # Fall back to random if BM25 finds nothing (very generic query)
+        if not top_candidates:
+            top_candidates = random.sample(self.records, min(DEFAULT_MATCH_COUNT, len(self.records)))
+
+        return top_candidates
 
     def rank_candidates(
         self, query: str, candidates: list[GameRecord]
     ) -> list[tuple[GameRecord, float]]:
         """
-        Very weak baseline ranking.
-
-        Right now every candidate gets a random score.
+        Re-score the BM25 candidates and return the top DEFAULT_MATCH_COUNT.
+        BM25 scores are already meaningful, so we just re-compute them cleanly
+        and slice to the final result count.
         """
-        ranked = [(record, random.random()) for record in candidates]
-        ranked.sort(key=lambda item: item[1], reverse=True)
-        return ranked
+        tokenized_query = query.lower().split()
+        # Map app_id -> index for fast lookup
+        id_to_idx = {r.app_id: i for i, r in enumerate(self.records)}
+        # Compute all BM25 scores in one call instead of once per candidate
+        all_scores = self.bm25.get_scores(tokenized_query)
+
+        scored = []
+        for record in candidates:
+            idx = id_to_idx.get(record.app_id)
+            if idx is None:
+                continue
+            scored.append((record, float(all_scores[idx])))
+
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return scored[:DEFAULT_MATCH_COUNT]
 
     def generate_answer(self, query: str, matches: list[tuple[GameRecord, float]]) -> str:
         """
-        Very weak baseline response generation.
+        Calls a local Ollama model with the top retrieved games as context
+        to produce a short, helpful recommendation summary.
         """
         if not matches:
-            return "No games were available to recommend."
+            return "No games were found matching your description."
 
-        names = ", ".join(record.name for record, _ in matches[:3])
-        return (
-            f'This scaffold ignores most of the query, but for "{query}" it picked: {names}. '
-            "Open recommender.py and replace the random retrieval, ranking, and answer generation steps."
+        # Build a compact context block for the LLM
+        context_lines = []
+        for i, (record, score) in enumerate(matches, 1):
+            tags = ", ".join(record._normalize_tags(record.raw.get("tags")))
+            context_lines.append(
+                f"{i}. {record.name} — {record.short_description or 'No description.'}"
+                + (f" Tags: {tags}." if tags else "")
+            )
+        context = "\n".join(context_lines)
+
+        prompt = (
+            f"A user is looking for Steam games matching this description:\n\"{query}\"\n\n"
+            f"Here are the top retrieved candidates:\n{context}\n\n"
+            "In 2-3 sentences, explain why these games are good matches for the user's request. "
+            "Be specific and mention game names. Do not add games not in the list."
         )
+
+        try:
+            response = ollama.chat(
+                model=OLLAMA_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return response.message.content.strip()
+        except Exception as exc:
+            # Graceful fallback if Ollama is unavailable
+            names = ", ".join(r.name for r, _ in matches[:3])
+            return f"Top matches for \"{query}\": {names}. (LLM unavailable: {exc})"
