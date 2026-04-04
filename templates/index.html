@@ -7,20 +7,21 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
   </head>
   <body>
-    <main class="shell">
-      <section class="hero">
-        <p class="eyebrow">Let's find you a game</p>
-        <h1>Game Recommender</h1>
-      </section>
+    <div class="shell">
 
-      <section class="panel">
+      <header class="hero">
+        <p class="eyebrow">Game Recommender</p>
+        <h1>Find your next game</h1>
+      </header>
+
+      <aside class="sidebar">
         <form id="search-form">
-          <label for="query" class="label">Game description</label>
+          <label for="query" class="label">Type your game description here</label>
           <textarea
             id="query"
             name="query"
-            rows="5"
-            placeholder="Example: I want a cozy card game with simple mechanics and a fun vibe."
+            rows="6"
+            placeholder="e.g. I want a cozy card game with simple mechanics and a fun vibe..."
             required
           ></textarea>
           <div class="actions">
@@ -28,13 +29,13 @@
             <p id="status" class="status">Ready.</p>
           </div>
         </form>
-      </section>
+      </aside>
 
-      <section class="results-grid">
+      <main class="main">
         <article class="panel answer-panel">
           <h2>LLM answer</h2>
           <div id="answer" class="answer-copy">
-            Enter a description to retrieve matching games.
+            Your personal recommendation assistant will explain its recommendations in more detail here.
           </div>
         </article>
 
@@ -45,8 +46,9 @@
           </div>
           <div id="matches" class="matches"></div>
         </article>
-      </section>
-    </main>
+      </main>
+
+    </div>
 
     <template id="match-template">
       <article class="match-card">

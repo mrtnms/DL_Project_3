@@ -23,6 +23,17 @@ def create_app() -> Flask:
         except Exception as exc:
             return jsonify({"error": "Search failed.", "details": str(exc)}), 500
 
+    @app.post("/api/explain")
+    def explain() -> Any:
+        payload = request.get_json(silent=True) or {}
+        query = (payload.get("query") or "").strip()
+        if not query:
+            return jsonify({"error": "A game description is required."}), 400
+        try:
+            return jsonify(search_engine.explain(query))
+        except Exception as exc:
+            return jsonify({"error": "Explanation failed.", "details": str(exc)}), 500
+
     return app
 
 
