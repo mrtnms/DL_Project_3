@@ -91,18 +91,27 @@ class GameSearchEngine:
         return records
 
     def search(self, query: str) -> dict[str, Any]:
+        """Fast path: BM25 retrieval + ranking only, no LLM."""
         candidates = self.retrieve_candidates(query)
         ranked_matches = self.rank_candidates(query, candidates)
         results = [record.to_result(score) for record, score in ranked_matches]
 
         return {
             "matches": results,
-            "answer": self.generate_answer(query, ranked_matches),
             "meta": {
                 "indexed_games": len(self.records),
-                "retrieval_mode": "bm25+ollama",
-                "note": f"BM25 retrieval over {len(self.records)} games, ranked and answered via {OLLAMA_MODEL}.",
+                "retrieval_mode": "bm25",
+                "note": f"BM25 retrieval over {len(self.records)} games.",
             },
+        }
+
+    def explain(self, query: str) -> dict[str, Any]:
+        """Slow path: runs BM25 again then calls the LLM."""
+        candidates = self.retrieve_candidates(query)
+        ranked_matches = self.rank_candidates(query, candidates)
+
+        return {
+            "answer": self.generate_answer(query, ranked_matches),
         }
 
     def retrieve_candidates(self, query: str) -> list[GameRecord]:
