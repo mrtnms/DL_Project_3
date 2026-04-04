@@ -8,6 +8,7 @@ from typing import Any
 
 import ollama
 from rank_bm25 import BM25Okapi
+from rerankers import Reranker
 
 BASE_DIR = Path(__file__).resolve().parent
 GAMES_PATH = BASE_DIR / "games.json"
@@ -16,6 +17,10 @@ DEFAULT_MATCH_COUNT = 5
 
 # Ollama model to use — swap for any model you have pulled locally
 OLLAMA_MODEL = "phi3.5"
+
+# Toggle to compare reranker vs BM25-only results
+# Set to False, restart Flask, run your query, then set back to True and restart
+USE_RERANKER = True
 
 
 def create_search_engine() -> "GameSearchEngine":
@@ -77,6 +82,14 @@ class GameSearchEngine:
             corpus.append(text.lower().split())
         self.bm25 = BM25Okapi(corpus)
 
+        # Reranker — repo default model, loaded once at startup
+        try:
+            self.reranker = Reranker("mixedbread-ai/mxbai-rerank-large-v1", model_type="cross-encoder")
+            print("[reranker] Loaded successfully.")
+        except Exception as exc:
+            print(f"[reranker] Failed to load: {exc}")
+            self.reranker = None
+
     def load_records(self) -> list[GameRecord]:
         payload = json.loads(self.games_path.read_text(encoding="utf-8"))
         records: list[GameRecord] = []
@@ -91,18 +104,27 @@ class GameSearchEngine:
         return records
 
     def search(self, query: str) -> dict[str, Any]:
+        """Fast path: BM25 retrieval + ranking only, no LLM."""
         candidates = self.retrieve_candidates(query)
         ranked_matches = self.rank_candidates(query, candidates)
         results = [record.to_result(score) for record, score in ranked_matches]
 
         return {
             "matches": results,
-            "answer": self.generate_answer(query, ranked_matches),
             "meta": {
                 "indexed_games": len(self.records),
-                "retrieval_mode": "bm25+ollama",
-                "note": f"BM25 retrieval over {len(self.records)} games, ranked and answered via {OLLAMA_MODEL}.",
+                "retrieval_mode": "bm25+reranker" if USE_RERANKER else "bm25",
+                "note": f"BM25 retrieval over {len(self.records)} games" + (", reranked via mxbai-rerank-large-v1." if USE_RERANKER else ", no reranker."),
             },
+        }
+
+    def explain(self, query: str) -> dict[str, Any]:
+        """Slow path: runs BM25 again then calls the LLM."""
+        candidates = self.retrieve_candidates(query)
+        ranked_matches = self.rank_candidates(query, candidates)
+
+        return {
+            "answer": self.generate_answer(query, ranked_matches),
         }
 
     def retrieve_candidates(self, query: str) -> list[GameRecord]:
@@ -113,15 +135,14 @@ class GameSearchEngine:
         tokenized_query = query.lower().split()
         scores = self.bm25.get_scores(tokenized_query)
 
-        # Pair each record with its BM25 score and take the top 20
         scored = sorted(
             zip(self.records, scores),
             key=lambda x: x[1],
             reverse=True,
         )
-        top_candidates = [record for record, score in scored[:20] if score > 0]
+        top_candidates = [record for record, score in scored[:20]]
 
-        # Fall back to random if BM25 finds nothing (very generic query)
+        # Fall back to random if corpus is empty
         if not top_candidates:
             top_candidates = random.sample(self.records, min(DEFAULT_MATCH_COUNT, len(self.records)))
 
@@ -131,25 +152,50 @@ class GameSearchEngine:
         self, query: str, candidates: list[GameRecord]
     ) -> list[tuple[GameRecord, float]]:
         """
-        Re-score the BM25 candidates and return the top DEFAULT_MATCH_COUNT.
-        BM25 scores are already meaningful, so we just re-compute them cleanly
-        and slice to the final result count.
+        Re-ranks BM25 candidates using the rerankers library default cross-encoder
+        (mixedbread-ai/mxbai-rerank-large-v1). Falls back to BM25 scores if reranker fails.
         """
-        tokenized_query = query.lower().split()
-        # Map app_id -> index for fast lookup
-        id_to_idx = {r.app_id: i for i, r in enumerate(self.records)}
-        # Compute all BM25 scores in one call instead of once per candidate
-        all_scores = self.bm25.get_scores(tokenized_query)
+        if not candidates:
+            return []
 
-        scored = []
+        docs = []
         for record in candidates:
-            idx = id_to_idx.get(record.app_id)
-            if idx is None:
-                continue
-            scored.append((record, float(all_scores[idx])))
+            tags = ", ".join(record._normalize_tags(record.raw.get("tags")))
+            text = f"{record.name}. {record.short_description}"
+            if tags:
+                text += f" Tags: {tags}."
+            docs.append(text)
 
-        scored.sort(key=lambda x: x[1], reverse=True)
-        return scored[:DEFAULT_MATCH_COUNT]
+        try:
+            if self.reranker is None or not USE_RERANKER:
+                raise RuntimeError("Reranker disabled." if not USE_RERANKER else "Reranker not loaded.")
+            results = self.reranker.rank(
+                query=query,
+                docs=docs,
+                doc_ids=list(range(len(candidates))),
+            )
+            score_by_idx = {result.doc_id: float(result.score) for result in results}
+            scored = [
+                (candidates[i], score_by_idx[i])
+                for i in range(len(candidates))
+                if i in score_by_idx
+            ]
+            scored.sort(key=lambda x: x[1], reverse=True)
+            print(f"[reranker] SUCCESS — top game: {scored[0][0].name}")
+            return scored[:DEFAULT_MATCH_COUNT]
+
+        except Exception as exc:
+            print(f"[reranker] FAILED — falling back to BM25. Error: {exc}")
+            tokenized_query = query.lower().split()
+            all_scores = self.bm25.get_scores(tokenized_query)
+            id_to_idx = {r.app_id: i for i, r in enumerate(self.records)}
+            scored = [
+                (record, float(all_scores[id_to_idx[record.app_id]]))
+                for record in candidates
+                if record.app_id in id_to_idx
+            ]
+            scored.sort(key=lambda x: x[1], reverse=True)
+            return scored[:DEFAULT_MATCH_COUNT]
 
     def generate_answer(self, query: str, matches: list[tuple[GameRecord, float]]) -> str:
         """
@@ -159,7 +205,6 @@ class GameSearchEngine:
         if not matches:
             return "No games were found matching your description."
 
-        # Build a compact context block for the LLM
         context_lines = []
         for i, (record, score) in enumerate(matches, 1):
             tags = ", ".join(record._normalize_tags(record.raw.get("tags")))
@@ -183,6 +228,5 @@ class GameSearchEngine:
             )
             return response.message.content.strip()
         except Exception as exc:
-            # Graceful fallback if Ollama is unavailable
             names = ", ".join(r.name for r, _ in matches[:3])
             return f"Top matches for \"{query}\": {names}. (LLM unavailable: {exc})"
