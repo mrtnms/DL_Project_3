@@ -7,9 +7,7 @@ const matchesNode = document.querySelector("#matches");
 const matchCountNode = document.querySelector("#match-count");
 const matchTemplate = document.querySelector("#match-template");
 
-function setLoadingState(isLoading, message) {
-  submitButton.disabled = isLoading;
-  submitButton.textContent = isLoading ? "Searching..." : "Find matches";
+function setStatus(message) {
   statusNode.textContent = message;
 }
 
@@ -63,32 +61,49 @@ form.addEventListener("submit", async (event) => {
 
   const query = queryField.value.trim();
   if (!query) {
-    setLoadingState(false, "Enter a description first.");
+    setStatus("Enter a description first.");
     return;
   }
 
-  setLoadingState(true, "Querying local RAG pipeline...");
-  answerNode.textContent = "Thinking...";
+  submitButton.disabled = true;
+  submitButton.textContent = "Searching...";
+  answerNode.textContent = "Your personal recommendation assistant is thinking hard... results incoming shortly.";
   matchesNode.innerHTML = "";
+  matchCountNode.textContent = "0";
 
+  const body = JSON.stringify({ query });
+  const headers = { "Content-Type": "application/json" };
+
+  // Fire both requests in parallel — matches are fast, LLM is slow
+  const matchesPromise = fetch("/api/search", { method: "POST", headers, body });
+  const answerPromise  = fetch("/api/explain", { method: "POST", headers, body });
+
+  // Show matches as soon as BM25 returns
   try {
-    const response = await fetch("/api/search", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query }),
-    });
-    const payload = await response.json();
-
-    if (!response.ok) {
-      throw new Error(payload.error || "Request failed");
-    }
-
-    answerNode.textContent = payload.answer;
+    const res = await matchesPromise;
+    const payload = await res.json();
+    if (!res.ok) throw new Error(payload.error || "Search failed");
     renderMatches(payload.matches || []);
-    setLoadingState(false, `Done. Indexed ${payload.meta.indexed_games} games.`);
-  } catch (error) {
-    answerNode.textContent = error.message;
+    submitButton.disabled = false;
+    submitButton.textContent = "Find matches";
+    setStatus(`Done. Indexed ${payload.meta.indexed_games} games — LLM still thinking...`);
+  } catch (err) {
     renderMatches([]);
-    setLoadingState(false, "Search failed.");
+    submitButton.disabled = false;
+    submitButton.textContent = "Find matches";
+    setStatus("Search failed.");
+    answerNode.textContent = err.message;
+  }
+
+  // Fill in the LLM answer whenever it arrives (could be ~2 min later)
+  try {
+    const res = await answerPromise;
+    const payload = await res.json();
+    if (!res.ok) throw new Error(payload.error || "Explanation failed");
+    answerNode.textContent = payload.answer;
+    setStatus("Done.");
+  } catch (err) {
+    answerNode.textContent = `LLM unavailable: ${err.message}`;
+    setStatus("Done (LLM failed).");
   }
 });
