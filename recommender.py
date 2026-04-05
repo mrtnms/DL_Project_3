@@ -15,11 +15,10 @@ GAMES_PATH = BASE_DIR / "games.json"
 MAX_GAMES = 5000
 DEFAULT_MATCH_COUNT = 5
 
-# Ollama model to use — swap for any model you have pulled locally
+# Ollama model to use
 OLLAMA_MODEL = "phi3.5"
 
 # Toggle to compare reranker vs BM25-only results
-# Set to False, restart Flask, run your query, then set back to True and restart
 USE_RERANKER = True
 
 
@@ -82,7 +81,7 @@ class GameSearchEngine:
             corpus.append(text.lower().split())
         self.bm25 = BM25Okapi(corpus)
 
-        # Reranker — repo default model, loaded once at startup
+        # Reranker — Specific cross-encoder to obtain high quality ranking
         try:
             self.reranker = Reranker("mixedbread-ai/mxbai-rerank-large-v1", model_type="cross-encoder")
             print("[reranker] Loaded successfully.")
